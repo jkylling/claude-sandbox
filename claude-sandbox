@@ -34,6 +34,7 @@ DEFAULT_BASE_VM="${CLAUDE_SANDBOX_BASE_VM:-}"
 DEFAULT_TEMPLATE="${CLAUDE_SANDBOX_TEMPLATE:-template:default}"
 DEFAULT_CLAUDE_SETTINGS_DIR="$SANDBOX_DIR/.claude"
 PORT_FORWARDS=""
+CHANNELS=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -409,6 +410,7 @@ Options:
   -t, --template YAML    Create from a YAML template (default: template:default)
   -p, --ports PORTS      Expose ports (e.g., 80:8080,9090,5642:1234)
                          Format: hostPort:guestPort or port for same on both
+  --channels CHANNELS    Pass --channels to Claude CLI
   -f, --force            Force stop VM (use with stop/stop-all)
   -h, --help             Show this help message
 
@@ -445,6 +447,7 @@ main() {
     local next_is_clone=false
     local next_is_template=false
     local next_is_ports=false
+    local next_is_channels=false
     local force_stop=false
     local settings_dir="${CLAUDE_SANDBOX_SETTINGS:-$DEFAULT_CLAUDE_SETTINGS_DIR}"
     BASE_VM="$DEFAULT_BASE_VM"
@@ -472,6 +475,9 @@ main() {
         elif [ "$next_is_ports" = true ]; then
             PORT_FORWARDS="$arg"
             next_is_ports=false
+        elif [ "$next_is_channels" = true ]; then
+            CHANNELS="$arg"
+            next_is_channels=false
         elif [ "$arg" = "--" ]; then
             parsing_claude_args=true
         elif [ "$arg" = "-d" ] || [ "$arg" = "--dir" ]; then
@@ -484,6 +490,8 @@ main() {
             next_is_template=true
         elif [ "$arg" = "-p" ] || [ "$arg" = "--ports" ]; then
             next_is_ports=true
+        elif [ "$arg" = "--channels" ]; then
+            next_is_channels=true
         elif [ "$arg" = "-f" ] || [ "$arg" = "--force" ]; then
             force_stop=true
         elif [ -z "$command" ]; then
@@ -599,6 +607,9 @@ main() {
 
     # Build claude command with any extra arguments
     local claude_cmd="claude --dangerously-skip-permissions"
+    if [ -n "$CHANNELS" ]; then
+        claude_cmd+=" --channels $(printf '%q' "$CHANNELS")"
+    fi
     if [ ${#claude_args[@]} -gt 0 ]; then
         for arg in "${claude_args[@]}"; do
             claude_cmd+=" $(printf '%q' "$arg")"
