@@ -52,6 +52,7 @@ check() {
 }
 
 check claude
+check gh
 check node
 check npm
 check rustc
