@@ -16,7 +16,8 @@
 #   claude-sandbox stop-all              # Stop all sandbox VMs
 #   claude-sandbox status                # Show all sandbox VMs status
 #   claude-sandbox delete                # Delete current project's VM
-#   claude-sandbox prune                 # Delete all project VMs (keeps base)
+#   claude-sandbox prune                 # Delete all project VMs
+#   claude-sandbox prune <prefix>        # Delete project VMs matching prefix
 #
 
 set -e
@@ -191,8 +192,12 @@ get_vm_name() {
 }
 
 is_hooks_server_running() {
-    [ -S "$HOOKS_SERVER_SOCKET" ] && return 0
-    [ -f "$HOOKS_SERVER_PIDFILE" ] && kill -0 "$(cat "$HOOKS_SERVER_PIDFILE")" 2>/dev/null && return 0
+    # Check if process is actually running (not just socket exists)
+    if [ -f "$HOOKS_SERVER_PIDFILE" ] && kill -0 "$(cat "$HOOKS_SERVER_PIDFILE")" 2>/dev/null; then
+        return 0
+    fi
+    # Clean up stale socket if process is dead
+    rm -f "$HOOKS_SERVER_SOCKET" "$HOOKS_SERVER_PIDFILE"
     return 1
 }
 
@@ -385,9 +390,10 @@ delete_vm() {
 }
 
 prune_project_vms() {
-    log_info "Deleting all project VMs..."
+    local prefix="${1:-claude-sandbox}"
+    log_info "Deleting project VMs matching prefix '$prefix'..."
     local count=0
-    for vm in $(limactl list --format '{{.Name}}' 2>/dev/null | grep '^claude-sandbox' || true); do
+    for vm in $(limactl list --format '{{.Name}}' 2>/dev/null | grep "^${prefix}" || true); do
         if is_vm_running "$vm"; then
             log_info "Stopping $vm..."
             limactl stop "$vm"
@@ -397,7 +403,7 @@ prune_project_vms() {
         ((count++)) || true
     done
     if [ $count -eq 0 ]; then
-        log_info "No project VMs to delete"
+        log_info "No project VMs matching '$prefix' to delete"
     else
         log_info "Deleted $count project VM(s)"
     fi
@@ -450,7 +456,7 @@ Commands:
   restart-hooks Restart the hooks server
   status        Show all sandbox VMs status
   delete        Delete the project's VM
-  prune         Delete all project VMs
+  prune [PREFIX] Delete all project VMs (optionally matching PREFIX)
 
 Options:
   -d, --dir DIR          Project directory (default: current directory)
@@ -476,6 +482,8 @@ Examples:
   claude-sandbox -- --resume               # Pass args to claude
   claude-sandbox status                    # See all VMs
   claude-sandbox -p 8080,3000:3000         # Expose ports 8080 and 3000
+  claude-sandbox prune                     # Delete all project VMs
+  claude-sandbox prune claude-sandbox-my   # Delete VMs starting with 'claude-sandbox-my'
 
   # Clone from an existing VM (e.g., one with dev tools pre-installed)
   claude-sandbox --clone-from my-dev-tools
@@ -492,6 +500,7 @@ main() {
     local claude_args=()
     local parsing_claude_args=false
     local command=""
+    local prune_prefix=""
     local next_is_dir=false
     local next_is_settings=false
     local next_is_clone=false
@@ -551,6 +560,8 @@ main() {
                     exit 1
                     ;;
             esac
+        elif [ "$command" = "prune" ] && [ -z "$prune_prefix" ]; then
+            prune_prefix="$arg"
         fi
     done
 
@@ -592,7 +603,7 @@ main() {
             exit 0
             ;;
         prune)
-            prune_project_vms
+            prune_project_vms "$prune_prefix"
             exit 0
             ;;
         --help|-h)

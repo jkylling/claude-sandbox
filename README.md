@@ -83,6 +83,7 @@ claude-sandbox stop                   # Stop the current project's VM
 claude-sandbox stop-all               # Stop all VMs and hooks server
 claude-sandbox delete                 # Delete the current project's VM
 claude-sandbox prune                  # Delete all project VMs
+claude-sandbox prune <prefix>         # Delete VMs starting with prefix
 claude-sandbox restart-hooks          # Restart the hooks server
 claude-sandbox status                 # Show all VMs and hooks server status
 ```
@@ -107,7 +108,7 @@ Claude settings are stored in `~/.claude-sandbox/.claude/` on the host, mounted 
 | `restart-hooks` | Restart the hooks server |
 | `status` | Show all sandbox VMs status |
 | `delete` | Delete the project's VM. Including Claude sessions |
-| `prune` | Delete all project VMs |
+| `prune [PREFIX]` | Delete all project VMs (optionally matching PREFIX) |
 
 ## Options
 

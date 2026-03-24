@@ -52,21 +52,24 @@ def handle_event(event: dict):
     The hook.sh wrapper sends: {time, pid, uuid, project, hook_payload: <claude event>}
     The claude event has: {hook_event_name, session_id, cwd, ...}
     """
-    payload = event.get("hook_payload", event)
-    event_name = payload.get("hook_event_name", "")
-    label = project_label(event)
+    try:
+        payload = event.get("hook_payload", event)
+        event_name = payload.get("hook_event_name", "")
+        label = project_label(event)
 
-    if event_name == "Notification":
-        notify(
-            f"Claude [{label}]",
-            payload.get("message", "Notification"),
-        )
-    elif event_name == "Stop":
-        notify(
-            f"Claude [{label}]",
-            "Waiting for input",
-            sound="Blow",
-        )
+        if event_name == "Notification":
+            notify(
+                f"Claude [{label}]",
+                payload.get("message", "Notification"),
+            )
+        elif event_name == "Stop":
+            notify(
+                f"Claude [{label}]",
+                "Waiting for input",
+                sound="Blow",
+            )
+    except Exception as e:
+        logger.error("Error handling event: %s", e, exc_info=True)
 
 
 class HookHandler(BaseHTTPRequestHandler):
@@ -120,7 +123,14 @@ def main():
         httpd.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        httpd.shutdown()
+    except Exception as e:
+        logger.error("Server crashed: %s", e, exc_info=True)
+        raise
+    finally:
+        try:
+            httpd.shutdown()
+        except:
+            pass
         socket_path.unlink(missing_ok=True)
 
 
