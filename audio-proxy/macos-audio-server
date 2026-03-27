@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""
+macOS Audio Server
+
+Listens on a Unix socket. When a client connects, starts recording from the
+Mac microphone and streams raw PCM audio to the client. When the client
+disconnects, recording stops. Zero mic usage when idle.
+
+Audio format: 16kHz, mono, 16-bit signed PCM (matches Claude Code /voice)
+"""
+
+import os
+import signal
+import socket
+import subprocess
+import sys
+import threading
+
+DEFAULT_SOCKET_PATH = os.path.expanduser("~/.claude-sandbox/audio-proxy.sock")
+
+
+def handle_client(conn, addr_info=""):
+    """Start recording from Mac mic and stream to client."""
+    print(f"Client connected{addr_info} — starting mic recording")
+    proc = subprocess.Popen(
+        ["rec", "-q", "-t", "raw", "-r", "16000", "-e", "signed", "-b", "16", "-c", "1", "-"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        while True:
+            data = proc.stdout.read(4096)
+            if not data:
+                break
+            conn.sendall(data)
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass
+    finally:
+        proc.terminate()
+        proc.wait()
+        conn.close()
+        print(f"Client disconnected{addr_info} — mic stopped")
+
+
+def run_unix(socket_path):
+    """Run server on a Unix domain socket."""
+    if os.path.exists(socket_path):
+        os.unlink(socket_path)
+    os.makedirs(os.path.dirname(socket_path), exist_ok=True)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(socket_path)
+    server.listen(2)
+
+    def cleanup(*_):
+        server.close()
+        try:
+            os.unlink(socket_path)
+        except OSError:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+
+    print(f"Audio server listening on {socket_path}")
+    print("Mic is OFF — will activate on client connect")
+
+    try:
+        while True:
+            conn, _ = server.accept()
+            threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
+    except (KeyboardInterrupt, OSError):
+        pass
+    finally:
+        cleanup()
+
+
+def run_tcp(port):
+    """Run server on a TCP port."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", port))
+    server.listen(2)
+
+    def cleanup(*_):
+        server.close()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup)
+    signal.signal(signal.SIGINT, cleanup)
+
+    print(f"Audio server listening on 127.0.0.1:{port}")
+    print("Mic is OFF — will activate on client connect")
+
+    try:
+        while True:
+            conn, addr = server.accept()
+            threading.Thread(
+                target=handle_client, args=(conn, f" from {addr}"), daemon=True
+            ).start()
+    except (KeyboardInterrupt, OSError):
+        pass
+    finally:
+        cleanup()
+
+
+def main():
+    addr = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SOCKET_PATH
+
+    if addr.isdigit():
+        run_tcp(int(addr))
+    else:
+        run_unix(addr)
+
+
+if __name__ == "__main__":
+    main()

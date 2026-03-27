@@ -1,0 +1,34 @@
+#!/bin/bash
+#
+# rec wrapper — intercepts Claude Code's /voice recording command and streams
+# audio from the Mac host via the audio proxy socket instead of using a local
+# microphone. Falls back to the real rec if the proxy socket is unavailable.
+#
+# Audio format: 16kHz, mono, 16-bit signed PCM (raw) to stdout
+#
+AUDIO_PROXY_SOCK="/tmp/audio-proxy.sock"
+
+if [ -S "$AUDIO_PROXY_SOCK" ]; then
+    # Stream audio from Mac host via socket proxy
+    exec python3 -c "
+import socket, sys, signal
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('$AUDIO_PROXY_SOCK')
+try:
+    while True:
+        data = s.recv(4096)
+        if not data:
+            break
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+except (BrokenPipeError, KeyboardInterrupt, OSError):
+    pass
+finally:
+    s.close()
+"
+else
+    # No audio proxy — fall back to real rec
+    exec /usr/bin/rec "$@"
+fi

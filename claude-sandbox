@@ -28,11 +28,16 @@ HOOKS_SERVER="$SCRIPT_DIR/claude-hooks-server"
 HOOKS_SERVER_SOCKET="$SANDBOX_DIR/claude-hooks.sock"
 HOOKS_SERVER_PIDFILE="$SANDBOX_DIR/claude-hooks-server.pid"
 HOOKS_SERVER_LOG="$SANDBOX_DIR/claude-hooks-server.log"
+AUDIO_SERVER="$SCRIPT_DIR/audio-proxy/macos-audio-server"
+AUDIO_SERVER_SOCKET="$SANDBOX_DIR/audio-proxy.sock"
+AUDIO_SERVER_PIDFILE="$SANDBOX_DIR/audio-server.pid"
+AUDIO_SERVER_LOG="$SANDBOX_DIR/audio-server.log"
 
 # Configurable via environment or flags
 DEFAULT_BASE_VM="${CLAUDE_SANDBOX_BASE_VM:-}"
 DEFAULT_TEMPLATE="${CLAUDE_SANDBOX_TEMPLATE:-template:default}"
 DEFAULT_CLAUDE_SETTINGS_DIR="$SANDBOX_DIR/.claude"
+ENABLE_VOICE="${CLAUDE_SANDBOX_VOICE_MODE:-false}"
 PORT_FORWARDS=""
 
 # Colors for output
@@ -90,7 +95,8 @@ check_lima() {
 
 # Claude-specific Lima settings (portForwards and provision scripts)
 # These are applied via --set when creating VMs
-CLAUDE_PORT_FORWARDS='[{"guestSocket":"/tmp/claude-hooks.sock","hostSocket":"{{.Home}}/.claude-sandbox/claude-hooks.sock","reverse":true}]'
+CLAUDE_PORT_FORWARDS_BASE='[{"guestSocket":"/tmp/claude-hooks.sock","hostSocket":"{{.Home}}/.claude-sandbox/claude-hooks.sock","reverse":true}]'
+CLAUDE_PORT_FORWARDS_AUDIO='[{"guestSocket":"/tmp/audio-proxy.sock","hostSocket":"{{.Home}}/.claude-sandbox/audio-proxy.sock","reverse":true}]'
 
 read -r -d '' CLAUDE_PROVISION_USER << 'PROVISION_EOF' || true
 #!/bin/bash
@@ -152,7 +158,11 @@ claude_set_args() {
     local env='{"UV_PROJECT_ENVIRONMENT": ".venv-agent"}'
 
     echo "--set"
-    echo ".portForwards += $CLAUDE_PORT_FORWARDS"
+    echo ".portForwards += $CLAUDE_PORT_FORWARDS_BASE"
+    if [ "$ENABLE_VOICE" = true ]; then
+        echo "--set"
+        echo ".portForwards += $CLAUDE_PORT_FORWARDS_AUDIO"
+    fi
     if [ -n "$extra_ports" ]; then
         local ports_json
         ports_json=$(parse_port_forwards "$extra_ports")
@@ -211,6 +221,39 @@ stop_hooks_server() {
         rm -f "$HOOKS_SERVER_PIDFILE"
     fi
     rm -f "$HOOKS_SERVER_SOCKET"
+}
+
+is_audio_server_running() {
+    if [ -f "$AUDIO_SERVER_PIDFILE" ] && kill -0 "$(cat "$AUDIO_SERVER_PIDFILE")" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$AUDIO_SERVER_SOCKET" "$AUDIO_SERVER_PIDFILE"
+    return 1
+}
+
+start_audio_server() {
+    if is_audio_server_running; then
+        return 0
+    fi
+
+    log_info "Starting audio server..."
+    nohup "$AUDIO_SERVER" "$AUDIO_SERVER_SOCKET" > "$AUDIO_SERVER_LOG" 2>&1 &
+    echo $! > "$AUDIO_SERVER_PIDFILE"
+    sleep 1
+
+    if ! is_audio_server_running; then
+        log_warn "Failed to start audio server (voice mode will use VM mic). Check $AUDIO_SERVER_LOG"
+    fi
+}
+
+stop_audio_server() {
+    if [ -f "$AUDIO_SERVER_PIDFILE" ]; then
+        local pid
+        pid=$(cat "$AUDIO_SERVER_PIDFILE")
+        kill "$pid" 2>/dev/null && log_info "Stopped audio server"
+        rm -f "$AUDIO_SERVER_PIDFILE"
+    fi
+    rm -f "$AUDIO_SERVER_SOCKET"
 }
 
 vm_exists() {
@@ -329,6 +372,7 @@ stop_all_vms() {
         fi
     done
     stop_hooks_server
+    stop_audio_server
     log_info "All stopped"
 }
 
@@ -371,6 +415,12 @@ show_status() {
     else
         echo "Not running"
     fi
+    echo -n "Audio server: "
+    if is_audio_server_running; then
+        echo "Running"
+    else
+        echo "Not running"
+    fi
     echo
     echo "VMs:"
     local found=0
@@ -409,6 +459,7 @@ Options:
   -t, --template YAML    Create from a YAML template (default: template:default)
   -p, --ports PORTS      Expose ports (e.g., 80:8080,9090,5642:1234)
                          Format: hostPort:guestPort or port for same on both
+  --voice                Enable voice mode (proxy host mic into VM)
   -f, --force            Force stop VM (use with stop/stop-all)
   -h, --help             Show this help message
 
@@ -416,6 +467,7 @@ Environment variables:
   CLAUDE_SANDBOX_BASE_VM                   Default VM to clone from
   CLAUDE_SANDBOX_TEMPLATE                  Default template to use
   CLAUDE_SANDBOX_SETTINGS                  Claude settings directory
+  CLAUDE_SANDBOX_VOICE_MODE=true           Enable voice mode
 
 Examples:
   claude-sandbox                           # Uses Lima default template
@@ -486,6 +538,8 @@ main() {
             next_is_ports=true
         elif [ "$arg" = "-f" ] || [ "$arg" = "--force" ]; then
             force_stop=true
+        elif [ "$arg" = "--voice" ]; then
+            ENABLE_VOICE=true
         elif [ -z "$command" ]; then
             case "$arg" in
                 shell|stop|delete|status|stop-all|prune|restart-hooks|--help|-h)
@@ -548,6 +602,9 @@ main() {
     esac
 
     start_hooks_server
+    if [ "$ENABLE_VOICE" = true ]; then
+        start_audio_server
+    fi
 
     # Create or start project VM
     if ! vm_exists "$vm_name"; then
@@ -594,7 +651,7 @@ main() {
 
     # Shell command: just open a bash shell
     if [ "$command" = "shell" ]; then
-        exec limactl shell "$vm_name" bash -l -c "cd '$project_dir' && exec bash"
+        exec limactl shell "$vm_name" bash -l -c "cd '$project_dir' && exec bash -il"
     fi
 
     # Build claude command with any extra arguments

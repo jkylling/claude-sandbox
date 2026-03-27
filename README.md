@@ -117,6 +117,7 @@ Claude settings are stored in `~/.claude-sandbox/.claude/` on the host, mounted 
 | `-s, --settings DIR` | Claude settings directory (default: `~/.claude-sandbox/.claude`) |
 | `-c, --clone-from VM` | Clone from an existing VM |
 | `-t, --template YAML` | Create from a YAML template (default: `template:default`) |
+| `--voice` | Enable voice mode (proxy host mic into VM) |
 
 ## Environment Variables
 
@@ -125,6 +126,7 @@ Claude settings are stored in `~/.claude-sandbox/.claude/` on the host, mounted 
 | `CLAUDE_SANDBOX_BASE_VM` | Default VM to clone from |
 | `CLAUDE_SANDBOX_TEMPLATE` | Default template to use |
 | `CLAUDE_SANDBOX_SETTINGS` | Claude settings directory |
+| `CLAUDE_SANDBOX_VOICE_MODE` | Set to `true` to enable voice mode (see below) |
 
 ## Files
 
@@ -136,6 +138,17 @@ Claude settings are stored in `~/.claude-sandbox/.claude/` on the host, mounted 
 - `rebuild-tools-vm` - Script to recreate the tools VM from `tools-vm.yaml`
 
 ## Tips
+
+### Voice mode
+
+Voice mode proxies the host Mac's microphone into the VM so Claude's `/voice` command works. It's disabled by default and must be opted in:
+
+```bash
+claude-sandbox --voice                    # One-off
+export CLAUDE_SANDBOX_VOICE_MODE=true     # Permanent (add to ~/.zshrc)
+```
+
+Requires [SoX](https://sox.sourceforge.net/) on the host (`brew install sox`).
 
 ### Avoiding host/guest build conflicts
 

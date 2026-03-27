@@ -66,7 +66,39 @@ provision:
         zip \
         htop \
         tree \
-        tmux
+        tmux \
+        sox
+
+      # Install rec wrapper for audio proxy (streams mic from macOS host)
+      cat > /usr/local/bin/rec << 'RECWRAPPER'
+#!/bin/bash
+# rec wrapper — streams audio from Mac host via audio proxy socket.
+# Falls back to real rec if proxy unavailable.
+AUDIO_PROXY_SOCK="/tmp/audio-proxy.sock"
+if [ -S "$AUDIO_PROXY_SOCK" ]; then
+    exec python3 -c "
+import socket, sys, signal
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('$AUDIO_PROXY_SOCK')
+try:
+    while True:
+        data = s.recv(4096)
+        if not data:
+            break
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+except (BrokenPipeError, KeyboardInterrupt, OSError):
+    pass
+finally:
+    s.close()
+"
+else
+    exec /usr/bin/rec "\$@"
+fi
+RECWRAPPER
+      chmod +x /usr/local/bin/rec
 
       # Install clang and LLVM (C/C++)
       apt-get install -y clang llvm cmake
