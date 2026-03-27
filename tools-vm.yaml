@@ -37,149 +37,172 @@ vmOpts:
       enabled: true
       binfmt: true
 
-# Cloud-init provisioning (runs only once during initial VM creation)
+# Cloud-init provisioning
+# Each tool has its own stamp file so provisioning can resume after failures.
 provision:
   - mode: system
     script: |
       #!/bin/bash
       set -eux
-      STAMP="/var/lib/claude-sandbox-provisioned"
-      if [ -f "$STAMP" ]; then exit 0; fi
 
-      # Update system
-      apt-get update
-      apt-get upgrade -y
+      STAMP_DIR="/var/lib/claude-sandbox"
+      mkdir -p "$STAMP_DIR"
 
-      # Install common tools and build essentials
-      apt-get install -y \
-        git \
-        curl \
-        wget \
-        jq \
-        ripgrep \
-        build-essential \
-        pkg-config \
-        libssl-dev \
-        ca-certificates \
-        gnupg \
-        unzip \
-        zip \
-        htop \
-        tree \
-        tmux
+      done_or_mark() {
+        local name="$1"
+        if [ -f "$STAMP_DIR/$name" ]; then
+          echo "==> Skipping $name (already installed)"
+          return 1
+        fi
+        return 0
+      }
+      stamp() { touch "$STAMP_DIR/$1"; }
 
-      # Install clang and LLVM (C/C++)
-      apt-get install -y clang llvm cmake
-
-      # Install Python and pip
-      apt-get install -y python3 python3-pip python3-venv
-
-      # Install Go (latest stable from golang.org)
-      GO_VERSION="1.22.5"
-      ARCH=$(dpkg --print-architecture)
-      if [ "$ARCH" = "arm64" ]; then
-        GO_ARCH="arm64"
-      else
-        GO_ARCH="amd64"
+      # --- Base packages ---
+      if done_or_mark "base-packages"; then
+        apt-get update
+        apt-get upgrade -y
+        apt-get install -y \
+          git curl wget jq ripgrep fd-find bat \
+          build-essential pkg-config libssl-dev \
+          ca-certificates gnupg software-properties-common \
+          unzip zip htop tree tmux \
+          clang llvm cmake
+        stamp "base-packages"
       fi
-      wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -O /tmp/go.tar.gz
-      rm -rf /usr/local/go
-      tar -C /usr/local -xzf /tmp/go.tar.gz
-      rm /tmp/go.tar.gz
 
-      # Add Go to system-wide PATH
-      cat > /etc/profile.d/go.sh << 'GOEOF'
+      # --- Python (system + 3.13 from deadsnakes) ---
+      if done_or_mark "python"; then
+        apt-get install -y python3 python3-pip python3-venv python3-dev
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update
+        apt-get install -y python3.13 python3.13-dev python3.13-venv
+        stamp "python"
+      fi
+
+      # --- Go ---
+      if done_or_mark "go"; then
+        GO_VERSION="1.24.1"
+        ARCH=$(dpkg --print-architecture)
+        wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -O /tmp/go.tar.gz
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf /tmp/go.tar.gz
+        rm /tmp/go.tar.gz
+
+        cat > /etc/profile.d/go.sh << 'GOEOF'
       export PATH=$PATH:/usr/local/go/bin
       export GOPATH=$HOME/go
       export PATH=$PATH:$GOPATH/bin
       GOEOF
+        stamp "go"
+      fi
 
-      # Install Docker Engine
-      install -m 0755 -d /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-      chmod a+r /etc/apt/keyrings/docker.asc
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-      apt-get update
-      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      # --- LaTeX (full TeX Live installation) ---
+      if done_or_mark "latex"; then
+        apt-get install -y texlive-full
+        stamp "latex"
+      fi
 
-      # Add default Lima user to docker group
-      usermod -aG docker "{{.User}}"
-
-      touch "$STAMP"
+      # --- Docker Engine ---
+      if done_or_mark "docker"; then
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+        apt-get update
+        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        usermod -aG docker "{{.User}}"
+        stamp "docker"
+      fi
 
   - mode: user
     script: |
       #!/bin/bash
-      set -u
-      STAMP="$HOME/.claude-sandbox-tools-provisioned"
-      if [ -f "$STAMP" ]; then exit 0; fi
+      set -eu
 
-      # Source Go environment
-      export PATH=$PATH:/usr/local/go/bin
-      export GOPATH=$HOME/go
-      export PATH=$PATH:$GOPATH/bin
+      STAMP_DIR="$HOME/.claude-sandbox-stamps"
+      mkdir -p "$STAMP_DIR"
 
-      # Install Rust via rustup
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      . "$HOME/.cargo/env"
+      done_or_mark() {
+        local name="$1"
+        if [ -f "$STAMP_DIR/$name" ]; then
+          echo "==> Skipping $name (already installed)"
+          return 1
+        fi
+        return 0
+      }
+      stamp() { touch "$STAMP_DIR/$1"; }
 
-      # Install rust-analyzer
-      rustup component add rust-analyzer
-
-      # Install gopls (Go language server)
-      go install golang.org/x/tools/gopls@latest
-
-      # Install uv (fast Python package manager)
-      curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      # Install fnm (Fast Node Manager)
-      curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$HOME/.local/share/fnm" --skip-shell
-      export PATH="$HOME/.local/share/fnm:$PATH"
-      # Disable set -u temporarily for fnm env (it may reference unset variables)
-      set +u
-      eval "$("$HOME/.local/share/fnm/fnm" env --shell bash)"
-      set -u
-
-      # Install latest LTS Node.js
-      "$HOME/.local/share/fnm/fnm" install --lts
-      "$HOME/.local/share/fnm/fnm" default lts-latest
-      set +u
-      eval "$("$HOME/.local/share/fnm/fnm" env --shell bash)"
-      set -u
-
-      # Install TypeScript and ts-node
-      npm install -g typescript ts-node
-
-      # Install Claude Code (native binary)
-      curl -fsSL https://claude.ai/install.sh | bash
-
-      # Install SDKMAN for JVM tools
-      export SDKMAN_DIR="$HOME/.sdkman"
-      curl -s "https://get.sdkman.io?rcupdate=false" | bash
-
-      # Source SDKMAN and install JVM tools (disable set -u as SDKMAN uses many optional variables)
-      set +u
-      if [ -f "$HOME/.sdkman/bin/sdkman-init.sh" ]; then
-        . "$HOME/.sdkman/bin/sdkman-init.sh"
-        yes | sdk install java 21.0.9-tem
-        yes | sdk install kotlin
-        yes | sdk install scala
-        yes | sdk install maven
-        yes | sdk install gradle
-        yes | sdk install sbt
+      # --- Rust ---
+      if done_or_mark "rust"; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        . "$HOME/.cargo/env"
+        rustup component add rust-analyzer
+        stamp "rust"
       fi
-      set -u
+      [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
-      # Configure Docker CLI plugins
-      mkdir -p "$HOME/.docker"
-      cat > "$HOME/.docker/config.json" << 'DOCKER_EOF'
+      # --- Go tools ---
+      if done_or_mark "go-tools"; then
+        export PATH=$PATH:/usr/local/go/bin
+        export GOPATH=$HOME/go
+        export PATH=$PATH:$GOPATH/bin
+        go install golang.org/x/tools/gopls@latest
+        stamp "go-tools"
+      fi
+
+      # --- uv (Python package manager) ---
+      if done_or_mark "uv"; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        stamp "uv"
+      fi
+
+      # --- Node.js via fnm ---
+      if done_or_mark "node"; then
+        curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$HOME/.local/share/fnm" --skip-shell
+        export PATH="$HOME/.local/share/fnm:$PATH"
+        set +u
+        eval "$("$HOME/.local/share/fnm/fnm" env --shell bash)"
+        set -u
+        "$HOME/.local/share/fnm/fnm" install --lts
+        "$HOME/.local/share/fnm/fnm" default lts-latest
+        set +u
+        eval "$("$HOME/.local/share/fnm/fnm" env --shell bash)"
+        set -u
+        npm install -g typescript ts-node
+        stamp "node"
+      fi
+
+      # --- Claude Code ---
+      if done_or_mark "claude"; then
+        curl -fsSL https://claude.ai/install.sh | bash
+        stamp "claude"
+      fi
+
+      # --- Docker CLI config ---
+      if done_or_mark "docker-config"; then
+        mkdir -p "$HOME/.docker"
+        cat > "$HOME/.docker/config.json" << 'DOCKER_EOF'
       {
         "cliPluginsExtraDirs": ["/usr/libexec/docker/cli-plugins"]
       }
       DOCKER_EOF
+        stamp "docker-config"
+      fi
 
-      # Add shell configuration to .profile (not .bashrc, which has an early-exit for non-interactive shells)
-      cat >> "$HOME/.profile" << 'PROFILE_EOF'
+      # --- Common Python packages (system-level) ---
+      if done_or_mark "python-packages"; then
+        export PATH="$HOME/.local/bin:$PATH"
+        uv pip install --system numpy scipy pandas matplotlib
+        stamp "python-packages"
+      fi
+
+      # --- Shell profile ---
+      if done_or_mark "profile"; then
+        cat >> "$HOME/.profile" << 'PROFILE_EOF'
+
+      # uv / local bin
+      export PATH="$HOME/.local/bin:$PATH"
 
       # fnm (Node.js)
       export PATH="$HOME/.local/share/fnm:$PATH"
@@ -188,9 +211,19 @@ provision:
       # Cargo/Rust
       . "$HOME/.cargo/env"
 
-      # SDKMAN
-      export SDKMAN_DIR="$HOME/.sdkman"
-      [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
+      # Shadow any macOS .venv that may be mounted from the host.
+      # A darwin venv has broken symlinks to /opt/homebrew/... and will confuse
+      # tools into thinking there's a usable environment. This function warns
+      # and guides toward creating a fresh Linux venv.
+      _check_venv() {
+        if [ -n "${VIRTUAL_ENV:-}" ]; then return; fi
+        local d="${PWD-.}"
+        if [ -d "$d/.venv" ] && [ -L "$d/.venv/bin/python" ] && ! [ -e "$d/.venv/bin/python" ]; then
+          echo "[claude-sandbox] WARNING: .venv/ has broken symlinks (likely a macOS venv)."
+          echo "  Create a Linux venv:  uv venv .venv-linux && source .venv-linux/bin/activate"
+        fi
+      }
+      PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}_check_venv"
       PROFILE_EOF
-
-      touch "$STAMP"
+        stamp "profile"
+      fi

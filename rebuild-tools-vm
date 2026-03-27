@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-VM_NAME="${1:-tools-vm}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VM_CONFIG="$SCRIPT_DIR/tools-vm.yaml"
 LOG_FILE="/tmp/rebuild-tools-vm-$$.log"
@@ -15,30 +14,104 @@ step() { echo -e "${GREEN}==> $1${NC}"; }
 warn() { echo -e "${YELLOW}    $1${NC}"; }
 fail() { echo -e "${RED}==> ERROR: $1${NC}"; }
 
+usage() {
+  cat << 'EOF'
+Usage: rebuild-tools-vm [--update] [VM_NAME]
+
+  (default)    Full rebuild: delete and recreate the VM from scratch
+  --update     Re-provision existing VM (clears stamp files, re-runs provisioning)
+
+VM_NAME defaults to "tools-vm".
+EOF
+  exit 0
+}
+
 if [ ! -f "$VM_CONFIG" ]; then
   fail "$VM_CONFIG not found"
   exit 1
 fi
 
+# Parse arguments
+UPDATE_MODE=false
+VM_NAME=""
+for arg in "$@"; do
+  case "$arg" in
+    --update) UPDATE_MODE=true ;;
+    --help|-h) usage ;;
+    *) VM_NAME="$arg" ;;
+  esac
+done
+VM_NAME="${VM_NAME:-tools-vm}"
+
+START_TIME=$(date +%s)
 echo "Log file: $LOG_FILE"
 echo
 
-# Check if VM exists and tear it down
-if limactl list -q 2>/dev/null | grep -q "^${VM_NAME}$"; then
-  step "Removing existing VM '$VM_NAME'..."
-  limactl stop "$VM_NAME" 2>/dev/null || true
-  limactl delete -f "$VM_NAME" >> "$LOG_FILE" 2>&1
+if [ "$UPDATE_MODE" = true ]; then
+  # Update mode: clear stamps and re-provision
+  if ! limactl list -q 2>/dev/null | grep -q "^${VM_NAME}$"; then
+    fail "VM '$VM_NAME' does not exist. Run without --update to create it."
+    exit 1
+  fi
+
+  # Start VM if not running
+  if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^${VM_NAME} Running$"; then
+    step "Starting VM '$VM_NAME'..."
+    limactl start "$VM_NAME" 2>&1 | tee -a "$LOG_FILE"
+  fi
+
+  step "Clearing provisioning stamps..."
+  limactl shell "$VM_NAME" sudo bash -c 'rm -rf /var/lib/claude-sandbox/*' 2>&1 | tee -a "$LOG_FILE"
+  limactl shell "$VM_NAME" bash -c 'rm -rf ~/.claude-sandbox-stamps/*' 2>&1 | tee -a "$LOG_FILE"
+
+  step "Re-provisioning (this runs the provision scripts again)..."
+  warn "Tail the log for details: tail -f $LOG_FILE"
+  # Extract and run the provision scripts from the YAML
+  # System provision
+  limactl shell "$VM_NAME" sudo bash -c "
+    $(python3 -c "
+import yaml, sys
+with open('$VM_CONFIG') as f:
+    cfg = yaml.safe_load(f)
+for p in cfg.get('provision', []):
+    if p['mode'] == 'system':
+        # Replace Lima template var with actual username
+        script = p['script'].replace('{{.User}}', '$(limactl shell "$VM_NAME" whoami)')
+        print(script)
+        break
+")
+  " 2>&1 | tee -a "$LOG_FILE"
+
+  # User provision
+  limactl shell "$VM_NAME" bash -lc "
+    $(python3 -c "
+import yaml, sys
+with open('$VM_CONFIG') as f:
+    cfg = yaml.safe_load(f)
+for p in cfg.get('provision', []):
+    if p['mode'] == 'user':
+        print(p['script'])
+        break
+")
+  " 2>&1 | tee -a "$LOG_FILE"
+
+else
+  # Full rebuild
+  if limactl list -q 2>/dev/null | grep -q "^${VM_NAME}$"; then
+    step "Removing existing VM '$VM_NAME'..."
+    limactl stop "$VM_NAME" 2>/dev/null || true
+    limactl delete -f "$VM_NAME" 2>&1 | tee -a "$LOG_FILE"
+  fi
+
+  step "Creating VM '$VM_NAME' (downloading Ubuntu image if needed)..."
+  warn "This may take several minutes on first run."
+  limactl create --name="$VM_NAME" "$VM_CONFIG" -y 2>&1 | tee -a "$LOG_FILE"
+
+  step "Starting VM and running provisioning..."
+  warn "Installing: build tools, Go, Rust, Node.js, Python/uv, Docker, Claude Code"
+  warn "Tail the log for details: tail -f $LOG_FILE"
+  limactl start "$VM_NAME" 2>&1 | tee -a "$LOG_FILE"
 fi
-
-step "Creating VM '$VM_NAME' (downloading Ubuntu image if needed)..."
-warn "This may take several minutes on first run."
-limactl create --name="$VM_NAME" "$VM_CONFIG" -y >> "$LOG_FILE" 2>&1
-
-step "Starting VM and running provisioning..."
-warn "Installing: build tools, Go, Rust, Node.js, Python/uv, Docker, JVM tools, Claude Code"
-warn "This typically takes 5-10 minutes. Tail the log for details:"
-warn "  tail -f $LOG_FILE"
-limactl start "$VM_NAME" >> "$LOG_FILE" 2>&1
 
 step "Verifying tools installation..."
 fail_count=0
@@ -58,13 +131,18 @@ check rustc
 check cargo
 check go
 check python3
+check python3.13
 check uv
 check docker
-check java
-check kotlin
-check gradle
-check mvn
+check rg
+check fd
+check pdflatex
 
+ELAPSED=$(( $(date +%s) - START_TIME ))
+MINUTES=$(( ELAPSED / 60 ))
+SECONDS_REM=$(( ELAPSED % 60 ))
+
+echo
 if [ $fail_count -ne 0 ]; then
   fail "$fail_count tool(s) failed to install. Check the log:"
   echo "  $LOG_FILE"
@@ -72,5 +150,5 @@ if [ $fail_count -ne 0 ]; then
   exit 1
 fi
 
-step "VM '$VM_NAME' is ready!"
+step "VM '$VM_NAME' is ready! (${MINUTES}m ${SECONDS_REM}s)"
 echo "  ./claude-sandbox --clone-from $VM_NAME"

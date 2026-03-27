@@ -115,7 +115,10 @@ fi
 SHARED="$HOME/.claude-shared"
 LOCAL="$HOME/.claude"
 mkdir -p "$LOCAL"
-for name in .credentials.json settings.json hooks CLAUDE.md; do
+# Always symlink credentials so first-time login writes through to the shared mount.
+ln -sf "$SHARED/.credentials.json" "$LOCAL/.credentials.json"
+# Only symlink other config if it exists on the shared mount.
+for name in settings.json hooks CLAUDE.md; do
   if [ -e "$SHARED/$name" ]; then
     ln -sf "$SHARED/$name" "$LOCAL/$name"
   fi
