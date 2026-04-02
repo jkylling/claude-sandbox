@@ -192,11 +192,15 @@ get_vm_name() {
 }
 
 is_hooks_server_running() {
-    # Check if process is actually running (not just socket exists)
-    if [ -f "$HOOKS_SERVER_PIDFILE" ] && kill -0 "$(cat "$HOOKS_SERVER_PIDFILE")" 2>/dev/null; then
-        return 0
+    # Check if process is actually running AND is our hooks server (not a reused PID)
+    if [ -f "$HOOKS_SERVER_PIDFILE" ]; then
+        local pid
+        pid=$(cat "$HOOKS_SERVER_PIDFILE")
+        if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o command= 2>/dev/null | grep -q "claude-hooks-server"; then
+            return 0
+        fi
     fi
-    # Clean up stale socket if process is dead
+    # Clean up stale socket if process is dead or PID was reused
     rm -f "$HOOKS_SERVER_SOCKET" "$HOOKS_SERVER_PIDFILE"
     return 1
 }
@@ -229,8 +233,12 @@ stop_hooks_server() {
 }
 
 is_audio_server_running() {
-    if [ -f "$AUDIO_SERVER_PIDFILE" ] && kill -0 "$(cat "$AUDIO_SERVER_PIDFILE")" 2>/dev/null; then
-        return 0
+    if [ -f "$AUDIO_SERVER_PIDFILE" ]; then
+        local pid
+        pid=$(cat "$AUDIO_SERVER_PIDFILE")
+        if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o command= 2>/dev/null | grep -q "audio"; then
+            return 0
+        fi
     fi
     rm -f "$AUDIO_SERVER_SOCKET" "$AUDIO_SERVER_PIDFILE"
     return 1
