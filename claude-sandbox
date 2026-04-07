@@ -710,12 +710,13 @@ main() {
     fi
 
     # Build claude command with any extra arguments
-    local claude_cmd="claude --dangerously-skip-permissions"
+    local claude_cmd="claude"
     if [ ${#claude_args[@]} -gt 0 ]; then
         for arg in "${claude_args[@]}"; do
             claude_cmd+=" $(printf '%q' "$arg")"
         done
     fi
+    claude_cmd+=" --permission-mode bypassPermissions"
 
     local lima_cmd="limactl shell \"$vm_name\" bash -l -c \"cd '$project_dir' && CLAUDE_SANDBOX_UUID=$(uuidgen) CLAUDE_HOOKS_SOCKET=/tmp/claude-hooks.sock $claude_cmd\""
     if [ -n "$TMUX" ]; then
@@ -725,7 +726,7 @@ main() {
 	if [[ ! "$current_session" =~ ^claude ]]; then
 	    tmux rename-session "claude-sandbox-$current_session"
 	fi
-	exec tmux new-window "$lima_cmd"
+	bash -c "$lima_cmd"
     else
 	# Not in tmux, start a new tmux session with claude
 	exec tmux new-session -s "$vm_name-$$" "$lima_cmd"

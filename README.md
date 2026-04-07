@@ -92,7 +92,7 @@ claude-sandbox status                 # Show all VMs and hooks server status
 
 1. **Tools VM**: A base Lima VM with dev tools and Claude Code pre-installed ([tools-vm.yaml](tools-vm.yaml))
 2. **Project VMs**: Cloned from the tools VM per project directory, with the project mounted read-write
-3. **Claude Execution**: Runs Claude Code inside the VM with `--dangerously-skip-permissions`
+3. **Claude Execution**: Runs Claude Code inside the VM with `--permission-mode bypassPermissions`
 4. **Hooks**: A host-side server ([claude-hooks-server](claude-hooks-server)) receives events via a unix socket forwarded by Lima and sends desktop notifications
 
 Claude settings are stored in `~/.claude-sandbox/.claude/` on the host, mounted into each VM as `~/.claude`. This persists settings across VM recreations and shares them between VMs. You could set `CLAUDE_SANDBOX_SETTINGS=~/.claude` to use your host settings, but this gives the AI a path to escape the VM.
