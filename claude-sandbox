@@ -40,6 +40,9 @@ DEFAULT_TEMPLATE="${CLAUDE_SANDBOX_TEMPLATE:-template:default}"
 DEFAULT_CLAUDE_SETTINGS_DIR="$SANDBOX_DIR/.claude"
 ENABLE_VOICE="${CLAUDE_SANDBOX_VOICE_MODE:-false}"
 PORT_FORWARDS=""
+VM_CPUS=""
+VM_MEMORY=""
+VM_DISK=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -176,6 +179,18 @@ claude_set_args() {
     echo ".mounts += $mounts"
     echo "--set"
     echo ".env += $env"
+    if [ -n "$VM_CPUS" ]; then
+        echo "--set"
+        echo ".cpus = $VM_CPUS"
+    fi
+    if [ -n "$VM_MEMORY" ]; then
+        echo "--set"
+        echo ".memory = \"$VM_MEMORY\""
+    fi
+    if [ -n "$VM_DISK" ]; then
+        echo "--set"
+        echo ".disk = \"$VM_DISK\""
+    fi
 }
 
 # Get VM name for a project directory
@@ -474,6 +489,9 @@ Options:
   -p, --ports PORTS      Expose ports (e.g., 80:8080,9090,5642:1234)
                          Format: hostPort:guestPort or port for same on both
   --voice                Enable voice mode (proxy host mic into VM)
+  --cpus N               Number of CPUs for the VM
+  --mem SIZE             Memory for the VM (e.g., 8GiB, 16GiB)
+  --disk SIZE            Disk size for the VM (e.g., 60GiB, 100GiB)
   -f, --force            Force stop VM (use with stop/stop-all)
   -h, --help             Show this help message
 
@@ -514,6 +532,9 @@ main() {
     local next_is_clone=false
     local next_is_template=false
     local next_is_ports=false
+    local next_is_cpus=false
+    local next_is_mem=false
+    local next_is_disk=false
     local force_stop=false
     local settings_dir="${CLAUDE_SANDBOX_SETTINGS:-$DEFAULT_CLAUDE_SETTINGS_DIR}"
     BASE_VM="$DEFAULT_BASE_VM"
@@ -541,6 +562,15 @@ main() {
         elif [ "$next_is_ports" = true ]; then
             PORT_FORWARDS="$arg"
             next_is_ports=false
+        elif [ "$next_is_cpus" = true ]; then
+            VM_CPUS="$arg"
+            next_is_cpus=false
+        elif [ "$next_is_mem" = true ]; then
+            VM_MEMORY="$arg"
+            next_is_mem=false
+        elif [ "$next_is_disk" = true ]; then
+            VM_DISK="$arg"
+            next_is_disk=false
         elif [ "$arg" = "--" ]; then
             parsing_claude_args=true
         elif [ "$arg" = "-d" ] || [ "$arg" = "--dir" ]; then
@@ -557,6 +587,12 @@ main() {
             force_stop=true
         elif [ "$arg" = "--voice" ]; then
             ENABLE_VOICE=true
+        elif [ "$arg" = "--cpus" ]; then
+            next_is_cpus=true
+        elif [ "$arg" = "--mem" ]; then
+            next_is_mem=true
+        elif [ "$arg" = "--disk" ]; then
+            next_is_disk=true
         elif [ -z "$command" ]; then
             case "$arg" in
                 shell|stop|delete|status|stop-all|prune|restart-hooks|--help|-h)
