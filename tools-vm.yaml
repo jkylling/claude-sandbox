@@ -137,6 +137,27 @@ provision:
       # Add default Lima user to docker group
       usermod -aG docker "{{.User}}"
 
+      # Tighten dirty-page writeback so virtio-blk doesn't see multi-GB bursts.
+      # Ubuntu defaults (20%/10%) let ~8 GB of dirty pages accumulate on a 40 GB
+      # guest, which wedges the vz bridge and makes `limactl shell` hang.
+      cat > /etc/sysctl.d/90-dirty-pages.conf << 'SYSCTL_EOF'
+      vm.dirty_background_ratio = 2
+      vm.dirty_ratio = 5
+      vm.dirty_expire_centisecs = 1500
+      vm.dirty_writeback_centisecs = 500
+      SYSCTL_EOF
+      sysctl --system
+
+      # zram swap — compressed RAM-backed swap. File-backed swap on the virtio
+      # disk would worsen the I/O saturation that this config aims to prevent.
+      apt-get install -y zram-tools
+      cat > /etc/default/zramswap << 'ZRAM_EOF'
+      ALGO=zstd
+      PERCENT=10
+      PRIORITY=100
+      ZRAM_EOF
+      systemctl enable --now zramswap.service
+
       touch "$STAMP"
 
   - mode: user
