@@ -131,12 +131,39 @@ Claude settings are stored in `~/.claude-sandbox/.claude/` on the host, mounted 
 
 ## Files
 
-- `claude-sandbox` - Main script
+- `claude-sandbox` - Thin bash wrapper that execs the command produced by `claude_sandbox.py`
+- `claude_sandbox.py` - Main script (pure Python stdlib; runnable directly without a venv)
 - `claude-sandbox.yaml` - Lima VM settings (for reference/documentation)
 - `claude-hooks-server` - Hooks server that sends desktop notifications
 - `hook.sh` - Hook script that runs inside the VM and forwards events to the hooks server
 - `tools-vm.yaml` - Lima VM template with dev tools and Claude Code pre-installed
 - `rebuild-tools-vm` - Script to recreate the tools VM from `tools-vm.yaml`
+- `tests/` - pytest suite (run with `uv run pytest` from `tests/`)
+
+## Tests
+
+The test suite lives in `tests/` and is managed with `uv`. It runs the
+`claude-sandbox` Python wrapper under a fake-binary harness (see
+`tests/fakes/`) and asserts the external-tool calls (`limactl`, `tmux`, `ps`,
+`uuidgen`, `nohup`, …) it emits.
+
+```bash
+cd tests
+uv sync
+uv run pytest
+uv run ruff check ../claude_sandbox.py .
+uv run ty check ../claude_sandbox.py .
+```
+
+End-to-end integration tests (which boot a real Lima VM and exercise the
+full lifecycle) are excluded from the default run. Opt in with:
+
+```bash
+uv run pytest -m integration
+```
+
+They are auto-skipped when `limactl` isn't on `PATH` or when hardware
+virtualization is unavailable (no `vz` on macOS, no `/dev/kvm` on Linux).
 
 ## Tips
 

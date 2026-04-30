@@ -1,0 +1,28 @@
+[project]
+name = "claude-sandbox-tests"
+version = "0.0.0"
+description = "Tests for claude-sandbox (script itself stays stdlib-only)."
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "ty>=0.0.1a4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+# Skip integration tests by default; opt in with `pytest -m integration`.
+addopts = "-ra -q -m 'not integration'"
+markers = [
+    "integration: end-to-end tests that boot a real Lima VM (slow; requires limactl)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "UP"]

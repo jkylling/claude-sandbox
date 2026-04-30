@@ -7,5 +7,5 @@ data=$(echo "$input" | jq -c --arg pid "$PPID" --arg uuid "$CLAUDE_SANDBOX_UUID"
     project: (if $project != "" then $project else null end),
     hook_payload: .,
   } | del(..|select(. == null))')
-curl --max-time 0.2 --unix-socket $socket http://localhost -X POST --json "$data"
+curl --max-time 2 --unix-socket "$socket" http://localhost -X POST --json "$data"
 exit 0
