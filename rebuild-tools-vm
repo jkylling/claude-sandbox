@@ -144,8 +144,10 @@ def main(argv: list[str] | None = None) -> int:
 
     step("Starting VM and running provisioning...")
     warn("Installing: build tools, Go, Rust, Node.js, Python/uv, Docker, JVM tools, Claude Code")
-    warn("This typically takes 5-10 minutes. Tail the log for details:")
-    warn(f"  tail -f {log_file}")
+    warn("This typically takes 5-10 minutes. To watch progress (in another terminal):")
+    warn(f"  limactl shell {vm_name} sudo tail -F /var/log/cloud-init-output.log  # provision output")
+    warn(f"  limactl shell {vm_name} sudo tail -F /var/log/cloud-init.log         # cloud-init internals")
+    warn(f"  tail -f {log_file}                                              # host-side limactl output")
     _run_logged(["limactl", "start", vm_name], log_file)
 
     step("Verifying tools installation...")
