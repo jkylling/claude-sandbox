@@ -230,6 +230,25 @@ def check_lima() -> None:
         sys.exit(1)
 
 
+def sync_credentials_from_keychain(settings_dir: Path) -> None:
+    """Refresh the shared ``.credentials.json`` from the macOS keychain.
+
+    Each VM's provision script symlinks ``~/.claude/.credentials.json`` to this
+    shared file. macOS Claude Code stores its real credentials in the keychain,
+    so without this sync the shared file stays frozen and new VMs boot with
+    long-expired tokens, forcing /login on every fresh sandbox.
+    """
+    if sys.platform != "darwin":
+        return
+    proc = _run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"])
+    if proc.returncode != 0 or not proc.stdout.strip():
+        log_warn("Could not read Claude credentials from macOS keychain; skipping sync")
+        return
+    cred_path = settings_dir / ".credentials.json"
+    cred_path.write_text(proc.stdout.strip() + "\n")
+    cred_path.chmod(0o600)
+
+
 # Cached ``limactl list`` output. Reset via ``_invalidate_vm_cache`` whenever
 # we mutate VM state (start/stop/clone/delete). Within a single command this
 # turns N+ separate ``limactl list`` invocations into one.
@@ -790,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # default + shell paths require the VM to be up
+    sync_credentials_from_keychain(Path(settings_dir))
     HOOKS.start()
     if enable_voice:
         AUDIO.start()
